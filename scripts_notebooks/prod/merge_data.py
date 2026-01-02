@@ -289,6 +289,18 @@ def add_work_locations_from_sql(final_df: pd.DataFrame, employee_locations_df: p
     matched_count = final_df['WorkLocation'].notna().sum()
     logger.info(f"Matched {matched_count} out of {len(final_df)} providers to office locations")
     
+    # Update Clinic column to use WorkLocation (provider's office location) instead of client office location
+    # This ensures Clinic column and tab assignment use the same value
+    if 'Clinic' in final_df.columns:
+        # Replace Clinic with WorkLocation where WorkLocation is available
+        # Keep original Clinic value only if WorkLocation is missing
+        mask = final_df['WorkLocation'].notna()
+        if mask.any():
+            final_df.loc[mask, 'Clinic'] = final_df.loc[mask, 'WorkLocation']
+            logger.info(f"Updated Clinic column with WorkLocation (provider office location) for {mask.sum()} rows")
+        # For rows without WorkLocation, keep original Clinic value (client office location)
+        logger.info(f"Kept original Clinic value (client office location) for {len(final_df) - mask.sum()} rows without WorkLocation")
+    
     return final_df
 
 
@@ -420,21 +432,21 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
                     shutil.move(source_path, archive_path)
                     logger.info(f"Archived existing file: {file}")
         
-        # Group data by ProviderOfficeLocationName (WorkLocation) and save as Excel with separate sheets
-        if 'WorkLocation' in final_df.columns:
-            # Replace empty/null WorkLocation values with special marker for "No Office Location Listed"
+        # Group data by Clinic (which now uses provider office location) and save as Excel with separate sheets
+        if 'Clinic' in final_df.columns:
+            # Replace empty/null Clinic values with special marker for "No Office Location Listed"
             # First convert empty strings to NaN, then fill NaN with the special marker
-            final_df['WorkLocation'] = final_df['WorkLocation'].replace('', pd.NA).fillna('z_NoOfficeLocationListed')
+            final_df['Clinic'] = final_df['Clinic'].replace('', pd.NA).fillna('z_NoOfficeLocationListed')
             
-            # Get unique office locations that actually have data
-            office_locations_with_data = final_df.groupby('WorkLocation').size()
-            office_locations = office_locations_with_data[office_locations_with_data > 0].index.tolist()
-            logger.info(f"Saving Excel file with {len(office_locations)} office location sheets (office locations with data)")
+            # Get unique clinics that actually have data
+            clinics_with_data = final_df.groupby('Clinic').size()
+            clinics = clinics_with_data[clinics_with_data > 0].index.tolist()
+            logger.info(f"Saving Excel file with {len(clinics)} clinic sheets (clinics with data)")
             
-            # Sort office locations alphabetically (case-insensitive)
+            # Sort clinics alphabetically (case-insensitive)
             # "z_NoOfficeLocationListed" will naturally sort last due to the "z_" prefix
-            office_locations_sorted = sorted(office_locations, key=lambda loc: str(loc).upper())
-            logger.info(f"Sorted office locations alphabetically")
+            clinics_sorted = sorted(clinics, key=lambda c: str(c).upper())
+            logger.info(f"Sorted clinics alphabetically")
             
             with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
                 # Add employee locations tab as the first sheet
@@ -448,31 +460,28 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
                 else:
                     logger.warning("  - Employee locations data not available, skipping 'EmployeeLocationInCR' sheet")
                 
-                for office_location in office_locations_sorted:
-                    location_data = final_df[final_df['WorkLocation'] == office_location].copy()
+                for clinic in clinics_sorted:
+                    clinic_data = final_df[final_df['Clinic'] == clinic].copy()
                     
                     # This should always have data since we filtered above, but double-check
-                    if len(location_data) == 0:
-                        logger.warning(f"  - Skipping sheet for '{office_location}' (no data found)")
+                    if len(clinic_data) == 0:
+                        logger.warning(f"  - Skipping sheet for '{clinic}' (no data found)")
                         continue
                     
-                    # Sort by Clinic first, then by TotalSupervisionPercent (lowest values first)
-                    if 'Clinic' in location_data.columns:
-                        location_data = location_data.sort_values(by=['Clinic', 'TotalSupervisionPercent'] if 'TotalSupervisionPercent' in location_data.columns else ['Clinic'], ascending=True, na_position='last')
-                    elif 'TotalSupervisionPercent' in location_data.columns:
-                        location_data = location_data.sort_values('TotalSupervisionPercent', ascending=True, na_position='last')
+                    # Sort by TotalSupervisionPercent (lowest values first)
+                    if 'TotalSupervisionPercent' in clinic_data.columns:
+                        clinic_data = clinic_data.sort_values('TotalSupervisionPercent', ascending=True, na_position='last')
+                        logger.info(f"  - Sorted {len(clinic_data)} rows by TotalSupervisionPercent (ascending)")
                     
-                    logger.info(f"  - Sorted {len(location_data)} rows by Clinic and TotalSupervisionPercent (ascending)")
-                    
-                    # Remove WorkLocation column from output (used only for grouping)
-                    if 'WorkLocation' in location_data.columns:
-                        location_data = location_data.drop(columns=['WorkLocation'])
+                    # Remove WorkLocation column from output (used only internally, not displayed)
+                    if 'WorkLocation' in clinic_data.columns:
+                        clinic_data = clinic_data.drop(columns=['WorkLocation'])
                     
                     # Excel sheet names must be <= 31 characters and can't contain certain characters
-                    # Clean the office location name for the sheet name
-                    sheet_name = str(office_location)[:31].replace('/', '_').replace('\\', '_').replace('?', '_').replace('*', '_').replace('[', '_').replace(']', '_').replace(':', '_')
-                    location_data.to_excel(writer, sheet_name=sheet_name, index=False)
-                    logger.info(f"  - Saved {len(location_data)} rows to sheet '{sheet_name}'")
+                    # Clean the clinic name for the sheet name
+                    sheet_name = str(clinic)[:31].replace('/', '_').replace('\\', '_').replace('?', '_').replace('*', '_').replace('[', '_').replace(']', '_').replace(':', '_')
+                    clinic_data.to_excel(writer, sheet_name=sheet_name, index=False)
+                    logger.info(f"  - Saved {len(clinic_data)} rows to sheet '{sheet_name}'")
             
             # Add conditional formatting after writing
             logger.info("Adding conditional formatting to Excel file...")
