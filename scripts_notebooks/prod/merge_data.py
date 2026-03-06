@@ -18,6 +18,7 @@ from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.formatting.rule import CellIsRule, FormulaRule
 from openpyxl.styles import PatternFill
+from transform_data import clean_clinic_name
 
 
 def setup_logging(log_dir: str = None) -> logging.Logger:
@@ -296,8 +297,8 @@ def add_work_locations_from_sql(final_df: pd.DataFrame, employee_locations_df: p
         # Keep original Clinic value only if WorkLocation is missing
         mask = final_df['WorkLocation'].notna()
         if mask.any():
-            final_df.loc[mask, 'Clinic'] = final_df.loc[mask, 'WorkLocation']
-            logger.info(f"Updated Clinic column with WorkLocation (provider office location) for {mask.sum()} rows")
+            final_df.loc[mask, 'Clinic'] = final_df.loc[mask, 'WorkLocation'].apply(clean_clinic_name)
+            logger.info(f"Updated Clinic column with cleaned WorkLocation (provider office location) for {mask.sum()} rows")
         # For rows without WorkLocation, keep original Clinic value (client office location)
         logger.info(f"Kept original Clinic value (client office location) for {len(final_df) - mask.sum()} rows without WorkLocation")
     
