@@ -100,16 +100,29 @@ GROUP BY b.ProviderContactId
 ORDER BY b.ProviderContactId;
 """
 
-# SQL query template for employee locations (maps provider names to office locations)
+# SQL query template for employee locations (maps provider names to office locations).
+# Pre-dedupes Provider in a CTE so the outer join input is smaller, filters out
+# NULL names on both sides (can never match), and drops the ORDER BY since
+# downstream pandas code does not rely on row order.
 EMPLOYEE_LOCATIONS_SQL_TEMPLATE = """
+WITH p AS (
+    SELECT DISTINCT
+        ProviderFirstName,
+        ProviderLastName,
+        ProviderOfficeLocationName
+    FROM [insights].[insights].[Provider]
+    WHERE ProviderFirstName IS NOT NULL
+      AND ProviderLastName IS NOT NULL
+)
 SELECT DISTINCT
     c.ContactId AS ProviderContactId,
     c.FirstName AS ProviderFirstName,
     c.LastName AS ProviderLastName,
     p.ProviderOfficeLocationName AS WorkLocation
 FROM [insights].[dw2].[Contacts] AS c
-INNER JOIN [insights].[insights].[Provider] AS p
+INNER JOIN p
     ON p.ProviderFirstName = c.FirstName
    AND p.ProviderLastName = c.LastName
-ORDER BY c.LastName, c.FirstName;
+WHERE c.FirstName IS NOT NULL
+  AND c.LastName IS NOT NULL;
 """
