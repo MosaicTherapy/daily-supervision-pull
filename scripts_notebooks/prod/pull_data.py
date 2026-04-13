@@ -12,13 +12,31 @@ Usage:
 import pandas as pd
 import pyodbc
 import os
+import json
 import logging
 import re
 import argparse
 from datetime import datetime, timedelta
 from typing import Tuple
 from dotenv import load_dotenv
-from sql_queries import DIRECT_SERVICES_SQL_TEMPLATE, SUPERVISION_SERVICES_SQL_TEMPLATE, BACB_SUPERVISION_TEMPLATE, EMPLOYEE_LOCATIONS_SQL_TEMPLATE
+from sql_queries import (
+    DIRECT_SERVICES_SQL_TEMPLATE,
+    SUPERVISION_SERVICES_SQL_TEMPLATE,
+    BACB_SUPERVISION_TEMPLATE,
+    EMPLOYEE_LOCATIONS_SQL_TEMPLATE,
+    EMPLOYEE_LOCATIONS_FRESHNESS_SQL,
+)
+
+
+# Cache for employee_locations query results, keyed on the source tables'
+# max row-modified timestamps. The employee locations pull is a slow
+# name-based join; most days neither source table has changed, so we can
+# skip it entirely and reload the previous result from disk.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))
+_EMPLOYEE_LOCATIONS_CACHE_DIR = os.path.join(_PROJECT_ROOT, 'data', 'cache')
+_EMPLOYEE_LOCATIONS_CACHE_CSV = os.path.join(_EMPLOYEE_LOCATIONS_CACHE_DIR, 'employee_locations_cache.csv')
+_EMPLOYEE_LOCATIONS_CACHE_META = os.path.join(_EMPLOYEE_LOCATIONS_CACHE_DIR, 'employee_locations_cache_meta.json')
 
 
 def setup_logging(log_dir: str = None) -> logging.Logger:
@@ -182,20 +200,97 @@ def execute_bacb_query(conn, start_date: str, end_date: str) -> pd.DataFrame:
     return df
 
 
+def _fetch_employee_locations_freshness(conn) -> Tuple[str, str]:
+    """
+    Run the cheap freshness check against Provider / Contacts and return the
+    two max-row-modified timestamps as ISO strings. Returns (None, None) on any error
+    so the caller can fall back to running the full query.
+    """
+    try:
+        row = pd.read_sql(EMPLOYEE_LOCATIONS_FRESHNESS_SQL, conn).iloc[0]
+        provider_ts = row['provider_row_modified_at']
+        contacts_ts = row['contacts_last_loaded_date']
+        provider_iso = None if pd.isna(provider_ts) else pd.Timestamp(provider_ts).isoformat()
+        contacts_iso = None if pd.isna(contacts_ts) else pd.Timestamp(contacts_ts).isoformat()
+        return provider_iso, contacts_iso
+    except Exception as e:
+        logging.warning(f"Employee locations freshness check failed, will run full query: {e}")
+        return None, None
+
+
 def execute_employee_locations_query(conn) -> pd.DataFrame:
     """
-    Execute the employee locations SQL query.
-    
+    Return the employee locations dataframe, using an on-disk cache keyed on
+    the source tables' max row-modified timestamps.
+
+    Flow:
+      1. Run a cheap freshness query that returns MAX(RowModifiedAt) on Provider
+         and MAX(LastLoadedDate) on Contacts.
+      2. If a cached CSV + metadata file exist and both cached timestamps are
+         >= the current MAX values, load and return the cached dataframe.
+      3. Otherwise, run the (slow) full employee locations query, refresh the
+         cache, and return the new dataframe.
+
+    Note: MAX-timestamp comparison cannot detect row deletions (a deletion does
+    not raise the MAX). That is acceptable here because downstream code only uses
+    this dataframe to look up WorkLocation by ProviderContactId; a stale row for
+    a deleted provider is harmless if that provider no longer appears in billing.
+
     Args:
         conn: Database connection
-        
+
     Returns:
-        pd.DataFrame: Query results with ProviderContactId, ProviderFirstName, ProviderLastName, WorkLocation (contains ProviderOfficeLocationName)
+        pd.DataFrame: ProviderContactId, ProviderFirstName, ProviderLastName, WorkLocation
     """
-    sql_query = EMPLOYEE_LOCATIONS_SQL_TEMPLATE
+    provider_iso, contacts_iso = _fetch_employee_locations_freshness(conn)
+
+    if (
+        provider_iso is not None
+        and contacts_iso is not None
+        and os.path.exists(_EMPLOYEE_LOCATIONS_CACHE_CSV)
+        and os.path.exists(_EMPLOYEE_LOCATIONS_CACHE_META)
+    ):
+        try:
+            with open(_EMPLOYEE_LOCATIONS_CACHE_META, 'r') as f:
+                meta = json.load(f)
+            cached_provider = meta.get('provider_row_modified_at')
+            cached_contacts = meta.get('contacts_last_loaded_date')
+            if cached_provider is not None and cached_contacts is not None \
+               and cached_provider >= provider_iso \
+               and cached_contacts >= contacts_iso:
+                df = pd.read_csv(_EMPLOYEE_LOCATIONS_CACHE_CSV)
+                logging.info(
+                    f"Employee locations cache hit (provider<={cached_provider}, "
+                    f"contacts<={cached_contacts}); loaded {len(df)} rows from cache"
+                )
+                return df
+            logging.info(
+                f"Employee locations cache stale (cached provider={cached_provider}, "
+                f"live={provider_iso}; cached contacts={cached_contacts}, live={contacts_iso}); "
+                "running full query"
+            )
+        except Exception as e:
+            logging.warning(f"Failed to read employee locations cache, running full query: {e}")
+
     logging.info("Executing employee locations query...")
-    df = pd.read_sql(sql_query, conn)
+    df = pd.read_sql(EMPLOYEE_LOCATIONS_SQL_TEMPLATE, conn)
     logging.info(f"Employee locations query retrieved {len(df)} rows")
+
+    if provider_iso is not None and contacts_iso is not None:
+        try:
+            os.makedirs(_EMPLOYEE_LOCATIONS_CACHE_DIR, exist_ok=True)
+            df.to_csv(_EMPLOYEE_LOCATIONS_CACHE_CSV, index=False)
+            with open(_EMPLOYEE_LOCATIONS_CACHE_META, 'w') as f:
+                json.dump({
+                    'provider_row_modified_at': provider_iso,
+                    'contacts_last_loaded_date': contacts_iso,
+                    'refreshed_at': datetime.now().isoformat(),
+                    'row_count': int(len(df)),
+                }, f, indent=2)
+            logging.info(f"Refreshed employee locations cache at {_EMPLOYEE_LOCATIONS_CACHE_CSV}")
+        except Exception as e:
+            logging.warning(f"Failed to write employee locations cache: {e}")
+
     return df
 
 

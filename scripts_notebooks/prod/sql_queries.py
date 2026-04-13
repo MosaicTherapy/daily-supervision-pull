@@ -126,3 +126,12 @@ INNER JOIN p
 WHERE c.FirstName IS NOT NULL
   AND c.LastName IS NOT NULL;
 """
+
+# Cheap freshness check against the source tables used by EMPLOYEE_LOCATIONS_SQL_TEMPLATE.
+# Returns the MAX row-modified timestamp on each table so the pipeline can skip the
+# expensive employee-locations pull when nothing has changed since the cache was built.
+EMPLOYEE_LOCATIONS_FRESHNESS_SQL = """
+SELECT
+    (SELECT MAX(RowModifiedAt)  FROM [insights].[insights].[Provider]) AS provider_row_modified_at,
+    (SELECT MAX(LastLoadedDate) FROM [insights].[dw2].[Contacts])      AS contacts_last_loaded_date;
+"""
