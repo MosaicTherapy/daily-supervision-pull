@@ -301,7 +301,21 @@ def add_work_locations_from_sql(final_df: pd.DataFrame, employee_locations_df: p
             logger.info(f"Updated Clinic column with cleaned WorkLocation (provider office location) for {mask.sum()} rows")
         # For rows without WorkLocation, keep original Clinic value (client office location)
         logger.info(f"Kept original Clinic value (client office location) for {len(final_df) - mask.sum()} rows without WorkLocation")
-    
+
+    # Re-aggregate after Clinic override to collapse rows that now share the same provider+clinic
+    pre_agg_count = len(final_df)
+    numeric_cols = ['DirectHours', 'SupervisionHours', 'BACBSupervisionHours', 'TotalSupervisionHours']
+    numeric_cols = [c for c in numeric_cols if c in final_df.columns]
+    first_cols = [c for c in final_df.columns if c not in numeric_cols + ['DirectProviderId', 'Clinic', 'TotalSupervisionPercent']]
+    agg_dict = {c: 'sum' for c in numeric_cols}
+    agg_dict.update({c: 'first' for c in first_cols})
+    final_df = final_df.groupby(['DirectProviderId', 'Clinic'], dropna=False).agg(agg_dict).reset_index()
+    if 'DirectHours' in final_df.columns and 'TotalSupervisionHours' in final_df.columns:
+        direct_hours = final_df['DirectHours'].replace(0, pd.NA)
+        final_df['TotalSupervisionPercent'] = (100 * final_df['TotalSupervisionHours'] / direct_hours).round(2)
+    if pre_agg_count != len(final_df):
+        logger.info(f"Re-aggregated after WorkLocation override: {pre_agg_count} -> {len(final_df)} rows (collapsed {pre_agg_count - len(final_df)} duplicates)")
+
     return final_df
 
 
