@@ -302,17 +302,39 @@ def add_work_locations_from_sql(final_df: pd.DataFrame, employee_locations_df: p
         # For rows without WorkLocation, keep original Clinic value (client office location)
         logger.info(f"Kept original Clinic value (client office location) for {len(final_df) - mask.sum()} rows without WorkLocation")
 
-    # Re-aggregate after Clinic override to collapse rows that now share the same provider+clinic
+    # Re-aggregate after the Clinic override to collapse rows that now share the
+    # same provider+clinic. transform_data produces one row per (provider, client
+    # office location); a provider whose hours span multiple client locations then
+    # has all those rows mapped onto a single clinic tab by the WorkLocation
+    # override above, leaving the same RBT on several rows of one tab.
     pre_agg_count = len(final_df)
-    numeric_cols = ['DirectHours', 'SupervisionHours', 'BACBSupervisionHours', 'TotalSupervisionHours']
-    numeric_cols = [c for c in numeric_cols if c in final_df.columns]
-    first_cols = [c for c in final_df.columns if c not in numeric_cols + ['DirectProviderId', 'Clinic', 'TotalSupervisionPercent']]
-    agg_dict = {c: 'sum' for c in numeric_cols}
+    original_cols = final_df.columns.tolist()
+
+    # DirectHours / SupervisionHours genuinely differ per client office location and
+    # are summed. BACB values are joined per-provider (on DirectProviderId only), so
+    # every duplicate row carries the SAME value and must be taken with 'first' --
+    # summing them double-counts BACB for a provider with split rows. The Total*
+    # columns are recomputed from the collapsed values below.
+    sum_cols = [c for c in ['DirectHours', 'SupervisionHours'] if c in final_df.columns]
+    recomputed_cols = ['TotalSupervisionHours', 'TotalSupervisionPercent']
+    first_cols = [c for c in final_df.columns
+                  if c not in sum_cols + recomputed_cols + ['DirectProviderId', 'Clinic']]
+
+    agg_dict = {c: 'sum' for c in sum_cols}
     agg_dict.update({c: 'first' for c in first_cols})
     final_df = final_df.groupby(['DirectProviderId', 'Clinic'], dropna=False).agg(agg_dict).reset_index()
+
+    # Recompute derived columns from the collapsed hours.
+    if 'SupervisionHours' in final_df.columns:
+        bacb_hours = final_df['BACBSupervisionHours'] if 'BACBSupervisionHours' in final_df.columns else 0
+        final_df['TotalSupervisionHours'] = final_df['SupervisionHours'] + bacb_hours
     if 'DirectHours' in final_df.columns and 'TotalSupervisionHours' in final_df.columns:
         direct_hours = final_df['DirectHours'].replace(0, pd.NA)
         final_df['TotalSupervisionPercent'] = (100 * final_df['TotalSupervisionHours'] / direct_hours).round(2)
+
+    # Restore the original column order.
+    final_df = final_df[[c for c in original_cols if c in final_df.columns]]
+
     if pre_agg_count != len(final_df):
         logger.info(f"Re-aggregated after WorkLocation override: {pre_agg_count} -> {len(final_df)} rows (collapsed {pre_agg_count - len(final_df)} duplicates)")
 
