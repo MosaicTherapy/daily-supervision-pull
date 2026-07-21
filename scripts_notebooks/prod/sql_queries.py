@@ -101,9 +101,11 @@ ORDER BY b.ProviderContactId;
 """
 
 # SQL query template for employee locations (maps provider names to office locations).
-# Pre-dedupes Provider in a CTE so the outer join input is smaller, filters out
-# NULL names on both sides (can never match), and drops the ORDER BY since
-# downstream pandas code does not rely on row order.
+# Pre-dedupes Provider in a CTE so the outer join input is smaller, and scopes the
+# Contacts side to a known set of ContactIds via the {provider_ids} placeholder
+# (a comma-separated list built from the direct/supervision/BACB pulls). Scoping
+# first avoids the full-table name-join cross-product that was timing out as the
+# tables grew. ORDER BY is dropped since downstream pandas code ignores row order.
 EMPLOYEE_LOCATIONS_SQL_TEMPLATE = """
 WITH p AS (
     SELECT DISTINCT
@@ -123,8 +125,7 @@ FROM [insights].[dw2].[Contacts] AS c
 INNER JOIN p
     ON p.ProviderFirstName = c.FirstName
    AND p.ProviderLastName = c.LastName
-WHERE c.FirstName IS NOT NULL
-  AND c.LastName IS NOT NULL;
+WHERE c.ContactId IN ({provider_ids});
 """
 
 # Cheap freshness check against the source tables used by EMPLOYEE_LOCATIONS_SQL_TEMPLATE.

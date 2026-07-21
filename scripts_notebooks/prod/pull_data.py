@@ -218,7 +218,7 @@ def _fetch_employee_locations_freshness(conn) -> Tuple[str, str]:
         return None, None
 
 
-def execute_employee_locations_query(conn) -> pd.DataFrame:
+def execute_employee_locations_query(conn, provider_ids: set) -> pd.DataFrame:
     """
     Return the employee locations dataframe, using an on-disk cache keyed on
     the source tables' max row-modified timestamps.
@@ -228,8 +228,12 @@ def execute_employee_locations_query(conn) -> pd.DataFrame:
          and MAX(LastLoadedDate) on Contacts.
       2. If a cached CSV + metadata file exist and both cached timestamps are
          >= the current MAX values, load and return the cached dataframe.
-      3. Otherwise, run the (slow) full employee locations query, refresh the
-         cache, and return the new dataframe.
+      3. Otherwise, run the employee locations query scoped to provider_ids,
+         refresh the cache, and return the new dataframe.
+
+    The query is scoped to the provider IDs seen in the direct/supervision/BACB
+    pulls so the Contacts name-join never runs as a full-table cross-product
+    (which was timing out as the tables grew).
 
     Note: MAX-timestamp comparison cannot detect row deletions (a deletion does
     not raise the MAX). That is acceptable here because downstream code only uses
@@ -238,10 +242,15 @@ def execute_employee_locations_query(conn) -> pd.DataFrame:
 
     Args:
         conn: Database connection
+        provider_ids: Set of ProviderContactId values to scope the query to
 
     Returns:
         pd.DataFrame: ProviderContactId, ProviderFirstName, ProviderLastName, WorkLocation
     """
+    if not provider_ids:
+        logging.warning("No provider IDs supplied, returning empty employee locations DataFrame")
+        return pd.DataFrame(columns=['ProviderContactId', 'ProviderFirstName', 'ProviderLastName', 'WorkLocation'])
+
     provider_iso, contacts_iso = _fetch_employee_locations_freshness(conn)
 
     if (
@@ -272,8 +281,10 @@ def execute_employee_locations_query(conn) -> pd.DataFrame:
         except Exception as e:
             logging.warning(f"Failed to read employee locations cache, running full query: {e}")
 
-    logging.info("Executing employee locations query...")
-    df = pd.read_sql(EMPLOYEE_LOCATIONS_SQL_TEMPLATE, conn)
+    id_list = ", ".join(str(int(pid)) for pid in provider_ids)
+    sql_query = EMPLOYEE_LOCATIONS_SQL_TEMPLATE.format(provider_ids=id_list)
+    logging.info(f"Executing employee locations query for {len(provider_ids)} providers...")
+    df = pd.read_sql(sql_query, conn)
     logging.info(f"Employee locations query retrieved {len(df)} rows")
 
     if provider_iso is not None and contacts_iso is not None:
@@ -374,9 +385,16 @@ def pull_data_main(start_date: str = None, end_date: str = None, save_files: boo
     logger.info("Pulling BACB supervision data...")
     bacb_df = execute_bacb_query(conn, start_date, end_date)
     
-    # Execute employee locations query
+    # Execute employee locations query, scoped to the providers actually seen in
+    # the direct/supervision/BACB pulls (avoids the slow full-table name-join).
     logger.info("Pulling employee locations data...")
-    employee_locations_df = execute_employee_locations_query(conn)
+    provider_ids = set()
+    for _df in (direct_df, supervision_df, bacb_df):
+        if _df is not None and 'ProviderContactId' in _df.columns:
+            provider_ids.update(
+                int(pid) for pid in _df['ProviderContactId'].dropna().unique()
+            )
+    employee_locations_df = execute_employee_locations_query(conn, provider_ids)
     
     # Close connection
     conn.close()
