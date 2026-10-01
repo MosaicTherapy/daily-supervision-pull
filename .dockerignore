@@ -1,0 +1,5 @@
+# Allowlist: the build context is only the code and its requirements. Everything
+# else (.env, credentials/, data/, logs/, venv/) must never reach the image or ACR.
+*
+!requirements.txt
+!scripts_notebooks/prod/*.py

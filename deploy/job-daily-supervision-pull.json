@@ -1,0 +1,82 @@
+{
+  "location": "eastus",
+  "identity": {
+    "type": "UserAssigned",
+    "userAssignedIdentities": {
+      "/subscriptions/5e22c05c-9bd7-4a33-bb73-fca5c9c0fea9/resourceGroups/cr-nightly-pulls/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cr-bronze": {}
+    }
+  },
+  "properties": {
+    "environmentId": "/subscriptions/5e22c05c-9bd7-4a33-bb73-fca5c9c0fea9/resourceGroups/cr-nightly-pulls/providers/Microsoft.App/managedEnvironments/cae-cr-eastus",
+    "workloadProfileName": "Consumption",
+    "configuration": {
+      "triggerType": "Schedule",
+      "scheduleTriggerConfig": {
+        "cronExpression": "0 11 * * *",
+        "parallelism": 1,
+        "replicaCompletionCount": 1
+      },
+      "replicaTimeout": 1800,
+      "replicaRetryLimit": 0,
+      "registries": [
+        {
+          "server": "mosaicdataacr.azurecr.io",
+          "identity": "/subscriptions/5e22c05c-9bd7-4a33-bb73-fca5c9c0fea9/resourceGroups/cr-nightly-pulls/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cr-bronze"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "cr-server",
+          "keyVaultUrl": "https://intakeApp-nightly-runs.vault.azure.net/secrets/cr-server",
+          "identity": "/subscriptions/5e22c05c-9bd7-4a33-bb73-fca5c9c0fea9/resourceGroups/cr-nightly-pulls/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cr-bronze"
+        },
+        {
+          "name": "cr-user",
+          "keyVaultUrl": "https://intakeApp-nightly-runs.vault.azure.net/secrets/cr-user",
+          "identity": "/subscriptions/5e22c05c-9bd7-4a33-bb73-fca5c9c0fea9/resourceGroups/cr-nightly-pulls/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cr-bronze"
+        },
+        {
+          "name": "cr-password",
+          "keyVaultUrl": "https://intakeApp-nightly-runs.vault.azure.net/secrets/cr-password",
+          "identity": "/subscriptions/5e22c05c-9bd7-4a33-bb73-fca5c9c0fea9/resourceGroups/cr-nightly-pulls/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cr-bronze"
+        },
+        {
+          "name": "gmail-email",
+          "keyVaultUrl": "https://intakeApp-nightly-runs.vault.azure.net/secrets/gmail-email",
+          "identity": "/subscriptions/5e22c05c-9bd7-4a33-bb73-fca5c9c0fea9/resourceGroups/cr-nightly-pulls/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cr-bronze"
+        },
+        {
+          "name": "gmail-app-password",
+          "keyVaultUrl": "https://intakeApp-nightly-runs.vault.azure.net/secrets/gmail-app-password",
+          "identity": "/subscriptions/5e22c05c-9bd7-4a33-bb73-fca5c9c0fea9/resourceGroups/cr-nightly-pulls/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cr-bronze"
+        },
+        {
+          "name": "google-drive-sa-json",
+          "keyVaultUrl": "https://intakeApp-nightly-runs.vault.azure.net/secrets/google-drive-sa-json",
+          "identity": "/subscriptions/5e22c05c-9bd7-4a33-bb73-fca5c9c0fea9/resourceGroups/cr-nightly-pulls/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cr-bronze"
+        }
+      ]
+    },
+    "template": {
+      "containers": [
+        {
+          "name": "daily-supervision-pull",
+          "image": "mosaicdataacr.azurecr.io/daily-supervision-pull:v1",
+          "resources": { "cpu": 0.5, "memory": "1Gi" },
+          "env": [
+            { "name": "CR_DWH_SERVER", "secretRef": "cr-server" },
+            { "name": "CR_UN", "secretRef": "cr-user" },
+            { "name": "CR_PW", "secretRef": "cr-password" },
+            { "name": "GMAIL_EMAIL", "secretRef": "gmail-email" },
+            { "name": "GMAIL_APP_PASSWORD", "secretRef": "gmail-app-password" },
+            { "name": "RECIPIENT_EMAIL", "value": "dcox@mosaictherapy.com" },
+            { "name": "GOOGLE_SERVICE_ACCOUNT_JSON", "secretRef": "google-drive-sa-json" },
+            { "name": "GOOGLE_IMPERSONATE_USER", "value": "dcox@mosaictherapy.com" },
+            { "name": "DRIVE_LIVE_FOLDER_ID", "value": "1Mh9gqV27KkEEuyX6M35_SB_vTErRz7Gm" },
+            { "name": "DRIVE_ARCHIVE_FOLDER_ID", "value": "1w66zw3i_-tQ9AOQlzN6pwNU8quXhsRn1" }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -6,3 +6,7 @@ numpy==2.3.5
 pyodbc==5.3.0
 python-dotenv==1.2.1
 openpyxl==3.1.5
+
+# Drive API publish (drive_api.py), used by the Azure job in place of the G:/ mount
+google-api-python-client==2.201.0
+google-auth==2.59.1
