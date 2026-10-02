@@ -137,7 +137,7 @@ data/
 *.xlsx
 *.xls
 *.json
-!deploy/*.json
+!deploy/job-*.json
 *.parquet
 
 # Log files
