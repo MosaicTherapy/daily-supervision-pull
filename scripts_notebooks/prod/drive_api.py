@@ -10,11 +10,15 @@ filesystem publish does through the mount:
   - archive publish: put the workbook straight into archived/, replacing a
     same-named file
 
-Auth is a service account with domain-wide delegation, acting as
-GOOGLE_IMPERSONATE_USER. The tracker folder lives in a user's My Drive, and
-service accounts have no Drive storage of their own, so files must be created
-as a real user. GOOGLE_SERVICE_ACCOUNT_JSON holds the key file's contents
-(injected from Key Vault in Azure).
+The tracker folder lives in a user's My Drive, and service accounts have no Drive
+storage of their own, so files must be created as a real user. Two ways to do
+that, both injected from Key Vault in Azure:
+  - GOOGLE_OAUTH_TOKEN_JSON: a user's authorized-user token (refresh token +
+    OAuth client), produced once by deploy/authorize_drive_user.py. Used today,
+    since domain-wide delegation needs a Workspace admin.
+  - GOOGLE_SERVICE_ACCOUNT_JSON + GOOGLE_IMPERSONATE_USER: a service account
+    key with domain-wide delegation, acting as that user.
+The OAuth token wins if both are set.
 """
 
 import json
@@ -22,6 +26,7 @@ import logging
 import os
 from datetime import datetime
 
+from google.oauth2 import credentials as user_credentials
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -41,10 +46,14 @@ def _folder_ids() -> tuple:
 
 
 def _get_service():
-    """Build a Drive v3 client acting as GOOGLE_IMPERSONATE_USER."""
-    info = json.loads(os.environ['GOOGLE_SERVICE_ACCOUNT_JSON'])
-    creds = service_account.Credentials.from_service_account_info(
-        info, scopes=SCOPES, subject=os.environ['GOOGLE_IMPERSONATE_USER'])
+    """Build a Drive v3 client acting as the configured user."""
+    if os.getenv('GOOGLE_OAUTH_TOKEN_JSON'):
+        info = json.loads(os.environ['GOOGLE_OAUTH_TOKEN_JSON'])
+        creds = user_credentials.Credentials.from_authorized_user_info(info, scopes=SCOPES)
+    else:
+        info = json.loads(os.environ['GOOGLE_SERVICE_ACCOUNT_JSON'])
+        creds = service_account.Credentials.from_service_account_info(
+            info, scopes=SCOPES, subject=os.environ['GOOGLE_IMPERSONATE_USER'])
     return build('drive', 'v3', credentials=creds, cache_discovery=False)
 
 

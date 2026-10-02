@@ -150,8 +150,9 @@ def publish_to_google_drive(output_file: str, save_to_archive: bool, logger: log
     the name. Redirecting output_file alone does NOT keep a test run out of the
     shared folder -- pass push_to_drive=False for that.
 
-    When GOOGLE_SERVICE_ACCOUNT_JSON is set (the Azure job), this publishes through
-    the Drive API (drive_api.py) instead of the desktop client's mount. Either way a
+    When Drive API credentials are set (GOOGLE_OAUTH_TOKEN_JSON or
+    GOOGLE_SERVICE_ACCOUNT_JSON, i.e. the Azure job), this publishes through the
+    Drive API (drive_api.py) instead of the desktop client's mount. Either way a
     failed publish raises, so the run reports failure rather than emailing success
     with nothing published.
 
@@ -165,7 +166,7 @@ def publish_to_google_drive(output_file: str, save_to_archive: bool, logger: log
         logger.info(f"push_to_drive=False, not publishing {os.path.basename(output_file)} to Google Drive")
         return
 
-    if os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON'):
+    if os.getenv('GOOGLE_OAUTH_TOKEN_JSON') or os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON'):
         # Imported here so machines publishing through the mount don't need the
         # Google client libraries installed.
         from drive_api import publish_to_archive_folder, publish_to_live_folder

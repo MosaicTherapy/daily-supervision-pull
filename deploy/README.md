@@ -8,7 +8,7 @@ image      mosaicdataacr.azurecr.io/daily-supervision-pull:v1   (Dockerfile at r
 job        job-daily-supervision-pull in cae-cr-eastus (definition: job-daily-supervision-pull.json)
 identity   id-cr-bronze (AcrPull, Key Vault Secrets User)
 secrets    intakeApp-nightly-runs: cr-server, cr-user, cr-password, gmail-email,
-           gmail-app-password, google-drive-sa-json
+           gmail-app-password, google-drive-oauth-token
 cron       0 11 * * *  (UTC)
 ```
 
@@ -18,12 +18,12 @@ anywhere else.
 
 ## How it differs from the laptop run
 
-- **Drive publish goes through the API.** With `GOOGLE_SERVICE_ACCOUNT_JSON` set,
+- **Drive publish goes through the API.** With `GOOGLE_OAUTH_TOKEN_JSON` set,
   `merge_data.publish_to_google_drive` uses `drive_api.py` instead of the `G:/`
   mount. Same behaviour: other workbooks move to `archived/`, then the new one is
-  uploaded. The service account acts as `GOOGLE_IMPERSONATE_USER` through
-  domain-wide delegation, because the tracker folder is in a user's My Drive and
-  service accounts have no Drive storage of their own.
+  uploaded. It publishes as dcox@ using that user's OAuth refresh token, because
+  the tracker folder is in a user's My Drive and service accounts have no Drive
+  storage of their own.
 - **A failed publish fails the run** (both paths), so the email reports failure
   instead of success with nothing published.
 - **No state between runs.** `data/` and `logs/` live on the container's scratch
@@ -36,29 +36,41 @@ anywhere else.
 
 ## One-time setup
 
-### 1. Google service account with domain-wide delegation
+### 1. OAuth client (Google Cloud project `mosaic-data-pipelines`)
 
-In Google Cloud (any project in the Mosaic org):
+The project already exists with the Drive API enabled. In the Cloud Console:
 
-1. Enable the **Google Drive API**.
-2. Create a service account, e.g. `daily-supervision-pull`.
-3. Create a JSON key for it and download it. (If org policy
-   `iam.disableServiceAccountKeyCreation` blocks this, an org admin has to allow it
-   for this project.)
-4. Note the service account's numeric **Unique ID** (OAuth 2 client ID).
+1. Google Auth Platform > **Branding / Audience**: user type **Internal** (Mosaic
+   accounts only; Internal apps' refresh tokens don't expire on a 7-day testing
+   clock the way External ones do).
+2. **Clients** > Create client > Application type **Desktop app** >
+   download the client JSON.
 
-In the Google Workspace Admin console (needs a super admin):
-
-5. Security > Access and data control > API controls > **Manage Domain Wide
-   Delegation** > Add new.
-6. Client ID: the Unique ID from step 4. Scope:
-   `https://www.googleapis.com/auth/drive`
-
-### 2. Store the key in Key Vault, then delete the local copy
+### 2. Sign in once and store the token
 
 ```
-az keyvault secret set --vault-name intakeApp-nightly-runs --name google-drive-sa-json --file <path-to-key>.json
+pip install google-auth-oauthlib
+python deploy/authorize_drive_user.py <client.json> <token.json>
+az keyvault secret set --vault-name intakeApp-nightly-runs --name google-drive-oauth-token --file <token.json>
 ```
+
+Sign in as dcox@ when the browser opens. The script prints the tracker folder's
+contents to prove the token works. Then delete both local JSON files.
+
+The token stops working if the user revokes the app (myaccount.google.com >
+Security > third-party access) or the account is suspended. Rerun step 2 to
+replace it.
+
+### Alternative: service account with domain-wide delegation
+
+Not tied to one user's consent, but needs a Workspace super admin. Already
+prepared: service account
+`daily-supervision-pull@mosaic-data-pipelines.iam.gserviceaccount.com`
+(client ID `114504728844766821674`), key in Key Vault as `google-drive-sa-json`.
+To switch: admin adds the client ID with scope `https://www.googleapis.com/auth/drive`
+under Security > API controls > Manage Domain Wide Delegation; then in the job,
+replace the `GOOGLE_OAUTH_TOKEN_JSON` env with `GOOGLE_SERVICE_ACCOUNT_JSON`
+(secret `google-drive-sa-json`) plus `GOOGLE_IMPERSONATE_USER=dcox@mosaictherapy.com`.
 
 ### 3. Confirm the existing secrets match this pipeline
 
