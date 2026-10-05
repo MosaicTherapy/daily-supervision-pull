@@ -5,12 +5,19 @@ the pattern of the `cr_bronze` and `waystar_pull` jobs in `lakehouse-data-ingest
 
 ```
 image      mosaicdataacr.azurecr.io/daily-supervision-pull:v1   (Dockerfile at repo root)
-job        job-daily-supervision-pull in cae-cr-eastus (definition: job-daily-supervision-pull.json)
+jobs       job-daily-supervision-pull         Mon-Sat  30 11 * * 1-6  (job-daily-supervision-pull.json)
+           job-daily-supervision-pull-sun     Sunday   0 17 * * 0     (job-daily-supervision-pull-sunday.json)
+           both in cae-cr-eastus
 identity   id-cr-bronze (AcrPull, Key Vault Secrets User)
 secrets    intakeApp-nightly-runs: cr-server, cr-user, cr-password, gmail-email,
            gmail-app-password, google-drive-oauth-token
-cron       0 11 * * *  (UTC)
 ```
+
+The times avoid CentralReach's scheduled maintenance, which disables the DWH login
+(Thursdays 00:00-06:00 ET, Sundays 00:00-08:00 ET, sometimes running as late as 11:00).
+11:30 UTC is 07:30 EDT and 06:30 EST, so it clears the Thursday window year-round.
+A job takes one cron expression, so the Sunday afternoon run is a second job. The two definitions differ only in name and
+cron; keep them in sync.
 
 `cae-cr-eastus` matters: its subnet sits behind `nat-cr-eastus`, whose static egress
 IP is the one CentralReach allowlists. The job would not reach the CR DWH from
@@ -32,7 +39,8 @@ anywhere else.
   cache only skips a query. Logs go to the environment's Log Analytics workspace.
 - **Code ships by image, not by `git pull`.** Merging to `main` changes nothing until
   a new image is built and the job is pointed at it (see "Deploying a change").
-- **Schedule is UTC.** 11:00 UTC is 07:00 EDT and 06:00 EST.
+- **Schedule is UTC.** 11:30 UTC is 07:30 EDT and 06:30 EST; 17:00 UTC (Sunday)
+  is 13:00 EDT and 12:00 EST. Unlike Task Scheduler, the ET time shifts with DST.
 
 ## One-time setup
 
@@ -83,6 +91,7 @@ must be the account `gmail-app-password` belongs to.
 ```
 az acr build --registry mosaicdataacr --image daily-supervision-pull:v1 --no-logs .
 az containerapp job create -g cr-nightly-pulls -n job-daily-supervision-pull --yaml deploy/job-daily-supervision-pull.json
+az containerapp job create -g cr-nightly-pulls -n job-daily-supervision-pull-sun --yaml deploy/job-daily-supervision-pull-sunday.json
 ```
 
 ## Test before cutover
@@ -112,11 +121,14 @@ task. Delete it after a couple of weeks of clean Azure runs.
 
 ## Deploying a change
 
-Bump the tag, build, and point the job at it:
+Bump the tag, build, and point both jobs at it:
 
 ```
 az acr build --registry mosaicdataacr --image daily-supervision-pull:v2 --no-logs .
 az containerapp job update -g cr-nightly-pulls -n job-daily-supervision-pull --image mosaicdataacr.azurecr.io/daily-supervision-pull:v2
+az containerapp job update -g cr-nightly-pulls -n job-daily-supervision-pull-sun --image mosaicdataacr.azurecr.io/daily-supervision-pull:v2
 ```
+
+Also bump the image tag in both job definition files.
 
 Build from `main`, which is what the laptop job ran.
