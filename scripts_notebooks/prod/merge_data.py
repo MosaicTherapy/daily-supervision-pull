@@ -150,6 +150,12 @@ def publish_to_google_drive(output_file: str, save_to_archive: bool, logger: log
     the name. Redirecting output_file alone does NOT keep a test run out of the
     shared folder -- pass push_to_drive=False for that.
 
+    When Drive API credentials are set (GOOGLE_OAUTH_TOKEN_JSON or
+    GOOGLE_SERVICE_ACCOUNT_JSON, i.e. the Azure job), this publishes through the
+    Drive API (drive_api.py) instead of the desktop client's mount. Either way a
+    failed publish raises, so the run reports failure rather than emailing success
+    with nothing published.
+
     Args:
         output_file: Local workbook to publish
         save_to_archive: Publish into the archived/ subfolder instead of the live folder
@@ -160,17 +166,31 @@ def publish_to_google_drive(output_file: str, save_to_archive: bool, logger: log
         logger.info(f"push_to_drive=False, not publishing {os.path.basename(output_file)} to Google Drive")
         return
 
+    if os.getenv('GOOGLE_OAUTH_TOKEN_JSON') or os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON'):
+        # Imported here so machines publishing through the mount don't need the
+        # Google client libraries installed.
+        from drive_api import publish_to_archive_folder, publish_to_live_folder
+        api_fn = publish_to_archive_folder if save_to_archive else publish_to_live_folder
+        api_fn(output_file, logger)
+        return
+
     save_fn = save_to_google_drive_archive_folder if save_to_archive else save_to_google_drive_folder
     label = 'Google Drive archive folder' if save_to_archive else 'Google Drive folder'
 
     last_error = None
     for folder in GOOGLE_DRIVE_FOLDERS:
+        # Only use a mount that is really there. Without this, a machine with no Drive
+        # client (e.g. Linux, where 'G:/...' is a relative path) would makedirs a
+        # phantom tree locally and report a successful publish.
+        if not os.path.isdir(os.path.dirname(folder)):
+            last_error = f"Drive folder not mounted: {os.path.dirname(folder)}"
+            continue
         try:
             save_fn(output_file, folder, logger)
             return
         except Exception as e:
             last_error = e
-    logger.warning(f"Failed to save to {label}: {last_error}")
+    raise RuntimeError(f"Failed to save to {label}: {last_error}")
 
 
 def save_to_google_drive_archive_folder(source_file: str, target_folder: str, logger: logging.Logger):

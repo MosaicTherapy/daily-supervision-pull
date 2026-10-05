@@ -1,5 +1,12 @@
 # Core dependencies for daily-supervision-pull pipeline
-pandas>=2.0.0
-pyodbc>=5.0.0
-python-dotenv>=1.0.0
-openpyxl>=3.1.0
+# Pinned to the versions production runs. pandas 3 has breaking changes
+# (copy-on-write, default string dtype); upgrade deliberately, not via a fresh install.
+pandas==2.3.3
+numpy==2.3.5
+pyodbc==5.3.0
+python-dotenv==1.2.1
+openpyxl==3.1.5
+
+# Drive API publish (drive_api.py), used by the Azure job in place of the G:/ mount
+google-api-python-client==2.201.0
+google-auth==2.59.1
