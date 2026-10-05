@@ -12,7 +12,7 @@
     "configuration": {
       "triggerType": "Schedule",
       "scheduleTriggerConfig": {
-        "cronExpression": "0 11 * * 1-6",
+        "cronExpression": "0 17 * * 0",
         "parallelism": 1,
         "replicaCompletionCount": 1
       },
